@@ -2,191 +2,91 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 export const dynamic = 'force-dynamic'
+const UUID = /^[0-9a-fA-F-]{36}$/
 
-function base() {
-  return (process.env.SUPABASE_FUNCTIONS_BASE || 'https://nahwlhptgdkwhjcfkhkt.supabase.co/functions/v1').replace(/\/$/, '')
+function validSession(cookie: string | undefined) {
+  if (!cookie) return false
+  const parts = cookie.split('.')
+  if (parts.length !== 2) return false
+  const [expiry, signature] = parts
+  if (!/^\d{10,}$/.test(expiry) || Number(expiry) < Date.now() / 1000) return false
+  const secret = process.env.JARVIS_SESSION_SECRET || ''
+  if (!secret) return false
+  const expected = createHmac('sha256', secret).update(expiry).digest('hex')
+  try {
+    const a = Buffer.from(expected, 'hex')
+    const b = Buffer.from(signature, 'hex')
+    return a.length === b.length && timingSafeEqual(a, b)
+  } catch { return false }
 }
-function validSession(v:string|undefined){
-  if(!v)return false
-  const [e,s]=v.split('.')
-  if(!e||!s||Number(e)<Date.now()/1000)return false
-  const secret=process.env.JARVIS_SESSION_SECRET||''
-  if(!secret)return false
-  const x=createHmac('sha256',secret).update(e).digest('hex')
-  try{
-    const A=Buffer.from(x,'hex'),B=Buffer.from(s,'hex')
-    return A.length===B.length && timingSafeEqual(A,B)
-  }catch{return false}
-}
-
-function allowed(method:string,parts:string[]){
-  const p=parts.join('/')
-  const id='[0-9a-fA-F-]{36}'
-  if(method==='GET')return new Set(['dashboard','integrations','leads','customers','appointments','quotes','fleet','followups','communications','reviews','sales-drafts','social','automation-jobs']).has(p)
-  if(method==='POST')return new Set(['leads/intake','quotes','appointments','fleet','social/draft']).has(p)
-    || new RegExp('^leads/'+id+'/(analyze|convert|draft)
-  const session = req.cookies.get('jarvis_session')?.value
-  if (!validSession(session)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const token=process.env.JARVIS_ENGINE_TOKEN||''
-  if(!token)return NextResponse.json({error:'engine_token_missing'},{status:500})
-
-  const { path = [] } = await context.params
-  const parts = path
-  if(!allowed(req.method,parts))return NextResponse.json({error:'route_not_allowed'},{status:404})
-  if(!['GET','HEAD'].includes(req.method)&&!sameOrigin(req))return NextResponse.json({error:'origin_not_allowed'},{status:403})
-  if(!['GET','HEAD'].includes(req.method)&&req.headers.get('content-type')?.split(';')[0].trim()!=='application/json')return NextResponse.json({error:'json_required'},{status:415})
-  const suffix = parts.map(encodeURIComponent).join('/')
-  const url = new URL(`${base()}/luxwash-business-engine/api/${suffix}`)
-  req.nextUrl.searchParams.forEach((value, key) => url.searchParams.append(key, value))
-
-  const headers: Record<string, string> = {
-    'x-jarvis-token': token,
-    accept: 'application/json'
+function allowed(method: string, parts: string[]) {
+  const path = parts.join('/')
+  if (method === 'GET') {
+    return new Set([
+      'dashboard', 'integrations', 'leads', 'customers', 'appointments', 'quotes', 'fleet',
+      'followups', 'communications', 'reviews', 'sales-drafts', 'social', 'automation-jobs'
+    ]).has(path)
   }
-  let body: string | undefined
-  if (!['GET', 'HEAD'].includes(req.method)) {
-    body = await req.text()
-    if(body.length>32768)return NextResponse.json({error:'payload_too_large'},{status:413})
-    headers['content-type'] = req.headers.get('content-type') || 'application/json'
+  if (method === 'POST') {
+    if (new Set(['leads/intake', 'quotes', 'appointments', 'fleet', 'social/draft']).has(path)) return true
+    return parts.length === 3 && parts[0] === 'leads' && UUID.test(parts[1]) &&
+      ['analyze', 'convert', 'draft'].includes(parts[2])
   }
-
-  const upstream = await fetch(url, { method:req.method, headers, body, cache:'no-store' })
-  const text = await upstream.text()
-  return new NextResponse(text, {
-    status: upstream.status,
-    headers: {
-      'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-      'cache-control':'no-store'
-    }
-  })
-}
-export const GET=proxy
-export const POST=proxy
-export const PATCH=proxy
-export const PUT=proxy
-export const DELETE=proxy
-).test(p)
-  if(method==='PATCH')return new RegExp('^leads/'+id+'
-  const session = req.cookies.get('jarvis_session')?.value
-  if (!validSession(session)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const token=process.env.JARVIS_ENGINE_TOKEN||''
-  if(!token)return NextResponse.json({error:'engine_token_missing'},{status:500})
-
-  const { path = [] } = await context.params
-  const parts = path
-  const suffix = parts.map(encodeURIComponent).join('/')
-  const url = new URL(`${base()}/luxwash-business-engine/api/${suffix}`)
-  req.nextUrl.searchParams.forEach((value, key) => url.searchParams.append(key, value))
-
-  const headers: Record<string, string> = {
-    'x-jarvis-token': token,
-    accept: 'application/json'
+  if (method === 'PATCH') {
+    return (parts.length === 2 && parts[0] === 'leads' && UUID.test(parts[1])) ||
+      (parts.length === 3 && parts[0] === 'sales-drafts' && UUID.test(parts[1]) && parts[2] === 'status')
   }
-  let body: string | undefined
-  if (!['GET', 'HEAD'].includes(req.method)) {
-    body = await req.text()
-    headers['content-type'] = req.headers.get('content-type') || 'application/json'
-  }
-
-  const upstream = await fetch(url, { method:req.method, headers, body, cache:'no-store' })
-  const text = await upstream.text()
-  return new NextResponse(text, {
-    status: upstream.status,
-    headers: {
-      'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-      'cache-control':'no-store'
-    }
-  })
-}
-export const GET=proxy
-export const POST=proxy
-export const PATCH=proxy
-export const PUT=proxy
-export const DELETE=proxy
-).test(p)
-    || new RegExp('^sales-drafts/'+id+'/status
-  const session = req.cookies.get('jarvis_session')?.value
-  if (!validSession(session)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const token=process.env.JARVIS_ENGINE_TOKEN||''
-  if(!token)return NextResponse.json({error:'engine_token_missing'},{status:500})
-
-  const { path = [] } = await context.params
-  const parts = path
-  const suffix = parts.map(encodeURIComponent).join('/')
-  const url = new URL(`${base()}/luxwash-business-engine/api/${suffix}`)
-  req.nextUrl.searchParams.forEach((value, key) => url.searchParams.append(key, value))
-
-  const headers: Record<string, string> = {
-    'x-jarvis-token': token,
-    accept: 'application/json'
-  }
-  let body: string | undefined
-  if (!['GET', 'HEAD'].includes(req.method)) {
-    body = await req.text()
-    headers['content-type'] = req.headers.get('content-type') || 'application/json'
-  }
-
-  const upstream = await fetch(url, { method:req.method, headers, body, cache:'no-store' })
-  const text = await upstream.text()
-  return new NextResponse(text, {
-    status: upstream.status,
-    headers: {
-      'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-      'cache-control':'no-store'
-    }
-  })
-}
-export const GET=proxy
-export const POST=proxy
-export const PATCH=proxy
-export const PUT=proxy
-export const DELETE=proxy
-).test(p)
   return false
 }
-function sameOrigin(req:NextRequest){
-  const origin=req.headers.get('origin')
-  return !origin || origin===req.nextUrl.origin
+function fail(error: string, status: number) {
+  return NextResponse.json({ error }, { status, headers: { 'cache-control': 'no-store' } })
 }
-
 async function proxy(req: NextRequest, context: { params: Promise<{ path?: string[] }> }) {
-  const session = req.cookies.get('jarvis_session')?.value
-  if (!validSession(session)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const token=process.env.JARVIS_ENGINE_TOKEN||''
-  if(!token)return NextResponse.json({error:'engine_token_missing'},{status:500})
+  if (!validSession(req.cookies.get('jarvis_session')?.value)) return fail('unauthorized', 401)
+  const token = process.env.JARVIS_ENGINE_TOKEN || ''
+  if (!token) return fail('engine_token_missing', 503)
 
   const { path = [] } = await context.params
-  const parts = path
-  const suffix = parts.map(encodeURIComponent).join('/')
-  const url = new URL(`${base()}/luxwash-business-engine/api/${suffix}`)
+  if (!allowed(req.method, path)) return fail('route_not_allowed', 404)
+  if (req.method !== 'GET') {
+    const origin = req.headers.get('origin')
+    if (origin && origin !== req.nextUrl.origin) return fail('origin_not_allowed', 403)
+    if (req.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') return fail('json_required', 415)
+  }
+
+  const base = (process.env.SUPABASE_FUNCTIONS_BASE ||
+    'https://nahwlhptgdkwhjcfkhkt.supabase.co/functions/v1').replace(/\/$/, '')
+  const url = new URL(base + '/luxwash-business-engine/api/' + path.map(encodeURIComponent).join('/'))
   req.nextUrl.searchParams.forEach((value, key) => url.searchParams.append(key, value))
 
   const headers: Record<string, string> = {
     'x-jarvis-token': token,
-    accept: 'application/json'
+    'accept': 'application/json'
   }
   let body: string | undefined
-  if (!['GET', 'HEAD'].includes(req.method)) {
+  if (req.method !== 'GET') {
     body = await req.text()
-    headers['content-type'] = req.headers.get('content-type') || 'application/json'
+    if (body.length > 32768) return fail('payload_too_large', 413)
+    headers['content-type'] = 'application/json'
   }
 
-  const upstream = await fetch(url, { method:req.method, headers, body, cache:'no-store' })
-  const text = await upstream.text()
-  return new NextResponse(text, {
-    status: upstream.status,
-    headers: {
-      'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-      'cache-control':'no-store'
-    }
-  })
+  try {
+    const upstream = await fetch(url, {
+      method: req.method, headers, body, cache: 'no-store',
+      signal: AbortSignal.timeout(20000)
+    })
+    return new NextResponse(await upstream.text(), {
+      status: upstream.status,
+      headers: {
+        'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
+        'cache-control': 'no-store'
+      }
+    })
+  } catch (err) {
+    console.error('JARVIS engine proxy unavailable', err instanceof Error ? err.name : 'unknown')
+    return fail('engine_temporarily_unavailable', 503)
+  }
 }
-export const GET=proxy
-export const POST=proxy
-export const PATCH=proxy
-export const PUT=proxy
-export const DELETE=proxy
+export const GET = proxy
+export const POST = proxy
+export const PATCH = proxy
