@@ -19,14 +19,15 @@ function validSession(v:string|undefined){
   }catch{return false}
 }
 
-async function proxy(req: NextRequest, context: { params: { path?: string[] } }) {
+async function proxy(req: NextRequest, context: { params: Promise<{ path?: string[] }> }) {
   const session = req.cookies.get('jarvis_session')?.value
   if (!validSession(session)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
   const token=process.env.JARVIS_ENGINE_TOKEN||''
   if(!token)return NextResponse.json({error:'engine_token_missing'},{status:500})
 
-  const parts = context.params.path || []
+  const { path = [] } = await context.params
+  const parts = path
   const suffix = parts.map(encodeURIComponent).join('/')
   const url = new URL(`${base()}/luxwash-business-engine/api/${suffix}`)
   req.nextUrl.searchParams.forEach((value, key) => url.searchParams.append(key, value))
